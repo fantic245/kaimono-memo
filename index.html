@@ -188,6 +188,38 @@
   .tag.daily{ background:var(--tag-daily); }
   .tag.etc{ background:var(--tag-etc); }
 
+  .item-main{ cursor:pointer; }
+  li.item.editing{
+    flex-direction:column;
+    align-items:stretch;
+    gap:8px;
+    outline:2px solid var(--leaf);
+  }
+  .edit-row{ display:flex; gap:8px; }
+  .edit-row input[type="text"]{
+    flex:1 1 auto;
+    min-width:0;
+    padding:10px 12px;
+    border-radius:10px;
+    border:1.5px solid var(--paper-line);
+    font-size:16px;
+    color:var(--ink);
+    background:#fff;
+  }
+  .edit-row input.edit-qty{ flex:0 0 72px; text-align:center; }
+  .edit-cats{ display:flex; gap:6px; }
+  .edit-actions{ display:flex; gap:8px; justify-content:flex-end; }
+  .edit-actions button{
+    border:none;
+    border-radius:10px;
+    padding:9px 18px;
+    font-size:14px;
+    font-weight:700;
+    cursor:pointer;
+  }
+  .edit-save{ background:var(--leaf); color:#fff; }
+  .edit-cancel{ background:var(--paper-line); color:var(--ink-soft); }
+
   .del{
     flex:0 0 auto;
     width:32px;
@@ -345,6 +377,7 @@
   let items = load();
   let currentCat = "food";
   let currentFilter = "all";
+  let editingId = null;
 
   const listEl = document.getElementById("list");
   const emptyEl = document.getElementById("emptyState");
@@ -447,6 +480,81 @@
     render();
   });
 
+  function buildEditor(it){
+    let editCat = it.cat;
+    const li = document.createElement("li");
+    li.className = "item editing";
+    li.dataset.id = it.id;
+
+    const row = document.createElement("div");
+    row.className = "edit-row";
+    const nameEdit = document.createElement("input");
+    nameEdit.type = "text";
+    nameEdit.maxLength = 40;
+    nameEdit.value = it.name;
+    const qtyEdit = document.createElement("input");
+    qtyEdit.type = "text";
+    qtyEdit.className = "edit-qty";
+    qtyEdit.maxLength = 8;
+    qtyEdit.value = it.qty || "";
+    qtyEdit.placeholder = "1個";
+    row.appendChild(nameEdit);
+    row.appendChild(qtyEdit);
+
+    const cats = document.createElement("div");
+    cats.className = "edit-cats";
+    Object.keys(CAT_LABEL).forEach(key=>{
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "cat-btn " + key + (key === editCat ? " active" : "");
+      b.textContent = CAT_LABEL[key];
+      b.addEventListener("click", ()=>{
+        editCat = key;
+        cats.querySelectorAll(".cat-btn").forEach(x=>x.classList.remove("active"));
+        b.classList.add("active");
+      });
+      cats.appendChild(b);
+    });
+
+    const actions = document.createElement("div");
+    actions.className = "edit-actions";
+    const cancel = document.createElement("button");
+    cancel.className = "edit-cancel";
+    cancel.textContent = "キャンセル";
+    const saveBtn = document.createElement("button");
+    saveBtn.className = "edit-save";
+    saveBtn.textContent = "保存";
+    actions.appendChild(cancel);
+    actions.appendChild(saveBtn);
+
+    function commit(){
+      const name = nameEdit.value.trim();
+      if(!name){ nameEdit.focus(); return; }
+      it.name = name;
+      it.qty = qtyEdit.value.trim();
+      it.cat = editCat;
+      editingId = null;
+      save();
+      render();
+    }
+    function abort(){ editingId = null; render(); }
+
+    saveBtn.addEventListener("click", commit);
+    cancel.addEventListener("click", abort);
+    [nameEdit, qtyEdit].forEach(inp=>{
+      inp.addEventListener("keydown", e=>{
+        if(e.key === "Enter") commit();
+        if(e.key === "Escape") abort();
+      });
+    });
+
+    li.appendChild(row);
+    li.appendChild(cats);
+    li.appendChild(actions);
+    setTimeout(()=>nameEdit.focus(), 0);
+    return li;
+  }
+
   function render(){
     const filtered = currentFilter === "all" ? items : items.filter(i=>i.cat===currentFilter);
 
@@ -470,6 +578,10 @@
     }
 
     filtered.forEach(it=>{
+      if(it.id === editingId){
+        listEl.appendChild(buildEditor(it));
+        return;
+      }
       const li = document.createElement("li");
       li.className = "item" + (it.checked ? " checked" : "");
       li.dataset.id = it.id;
@@ -498,6 +610,7 @@
       }
       main.appendChild(nameDiv);
       main.appendChild(metaDiv);
+      main.addEventListener("click", ()=>{ editingId = it.id; render(); });
 
       const del = document.createElement("button");
       del.className = "del";
@@ -518,6 +631,10 @@
   }
 
   render();
+
+  if("serviceWorker" in navigator && location.protocol !== "file:"){
+    navigator.serviceWorker.register("sw.js").catch(e=>console.error("オフライン用の登録に失敗しました", e));
+  }
 })();
 </script>
 </body>
