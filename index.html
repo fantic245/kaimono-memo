@@ -302,6 +302,55 @@
     cursor:pointer;
   }
   .add-btn:active{ background:var(--leaf-deep); }
+  .mic-btn{
+    flex:0 0 auto;
+    width:46px;
+    height:46px;
+    border:1.5px solid var(--leaf);
+    border-radius:12px;
+    background:#fff;
+    color:var(--leaf-deep);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    cursor:pointer;
+  }
+  .mic-btn svg{ width:22px; height:22px; fill:currentColor; }
+  .mic-btn.listening{
+    background:var(--tomato);
+    border-color:var(--tomato);
+    color:#fff;
+    animation:micpulse 1s ease-in-out infinite;
+  }
+  @keyframes micpulse{ 50%{ opacity:.65; } }
+  .voice-toast{
+    position:absolute;
+    left:14px; right:14px;
+    bottom:100%;
+    margin-bottom:8px;
+    padding:10px 14px;
+    border-radius:12px;
+    background:var(--ink);
+    color:#fff;
+    font-size:14px;
+    display:flex;
+    align-items:center;
+    gap:10px;
+    box-shadow:0 4px 14px var(--shadow);
+  }
+  .voice-toast[hidden]{ display:none; }
+  .voice-toast .msg{ flex:1 1 auto; word-break:break-all; }
+  .voice-toast button{
+    flex:0 0 auto;
+    border:1.5px solid #fff;
+    background:transparent;
+    color:#fff;
+    border-radius:8px;
+    padding:4px 10px;
+    font-size:13px;
+    font-weight:700;
+    cursor:pointer;
+  }
 
   .cat-select{
     display:flex;
@@ -419,9 +468,16 @@
 </div>
 
 <div class="composer">
+  <div class="voice-toast" id="voiceToast" hidden>
+    <span class="msg" id="voiceMsg"></span>
+    <button type="button" id="voiceUndo" hidden>元に戻す</button>
+  </div>
   <div class="composer-row">
     <input type="text" id="nameInput" placeholder="品物名を入力" maxlength="40">
     <input type="text" id="qtyInput" class="qty-input" placeholder="1個" maxlength="8">
+    <button class="mic-btn" id="micBtn" type="button" aria-label="音声で入力" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+    </button>
     <button class="add-btn" id="addBtn">＋</button>
   </div>
   <div class="cat-select">
@@ -564,19 +620,25 @@
     }
   }
 
-  function addItem(){
-    const name = nameInput.value.trim();
-    if(!name) { nameInput.focus(); return; }
-    const qty = qtyInput.value.trim();
-    const store = storeInput.value.trim();
-    items.unshift({
+  function pushItem(name, qty, store){
+    const item = {
       id: Date.now() + "-" + Math.random().toString(36).slice(2,7),
       name: name,
       qty: qty,
       cat: currentCat,
       store: store,
       checked: false
-    });
+    };
+    items.unshift(item);
+    return item;
+  }
+
+  function addItem(){
+    const name = nameInput.value.trim();
+    if(!name) { nameInput.focus(); return; }
+    const qty = qtyInput.value.trim();
+    const store = storeInput.value.trim();
+    pushItem(name, qty, store);
     rememberStore(store);
     nameInput.value = "";
     qtyInput.value = "";
@@ -789,6 +851,135 @@
     progressBar.style.width = total ? Math.round(done/total*100) + "%" : "0%";
     progressLabel.textContent = done + " / " + total + " こ";
     clearRow.style.display = (items.length > 0 && done > 0) ? "block" : "none";
+  }
+
+  // ---------- 音声入力 ----------
+  const micBtn = document.getElementById("micBtn");
+  const voiceToast = document.getElementById("voiceToast");
+  const voiceMsg = document.getElementById("voiceMsg");
+  const voiceUndo = document.getElementById("voiceUndo");
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let listening = false;
+  let toastTimer = null;
+  let lastVoiceIds = [];
+
+  function showToast(text, withUndo){
+    voiceMsg.textContent = text;
+    voiceUndo.hidden = !withUndo;
+    voiceToast.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(()=>{ voiceToast.hidden = true; }, withUndo ? 8000 : 5000);
+  }
+
+  const KANJI_KANA = /[一-鿿゠-ヿ々]/;
+  const QTY_UNITS = "本|個|こ|袋|パック|枚|つ|コ|箱|缶|丁|束|切れ|玉|匹|杯|冊";
+
+  // 「牛乳と卵と食パン」→ 牛乳 / 卵 / 食パン。「と」で切るのは、前後が品物らしいときだけ
+  function splitSpoken(text){
+    const parts = [];
+    // 「ねぎ 3本」のように数量の前に空白が入っても、品物と数量を切り離さない
+    text = text.replace(new RegExp("\\s+(?=[0-9０-９一二三四五六七八九十]+\\s*(?:" + QTY_UNITS + ")(?:\\s|$|、))", "g"), "");
+    text.split(/[、,，。.！!?？\s]+/).forEach(seg=>{
+      if(!seg) return;
+      let last = 0;
+      for(let i = 0; i < seg.length; i++){
+        if(seg[i] !== "と") continue;
+        const left = seg.slice(last, i);
+        const right = seg.slice(i + 1);
+        const leftOk = left.length >= 2 || (left.length === 1 && KANJI_KANA.test(left));
+        const rightOk = right.length >= 2 || (right.length === 1 && KANJI_KANA.test(right));
+        if(leftOk && rightOk){
+          parts.push(left);
+          last = i + 1;
+        }
+      }
+      const tail = seg.slice(last);
+      if(tail) parts.push(tail);
+    });
+    return parts;
+  }
+
+  // 「牛乳2本」→ 品物名「牛乳」、数量「2本」
+  function parseQty(s){
+    const m = s.match(new RegExp("^(.+?)\\s*([0-9０-９一二三四五六七八九十]+\\s*(?:" + QTY_UNITS + "))$"));
+    return m ? { name: m[1].trim(), qty: m[2].replace(/\s+/g, "") } : { name: s, qty: "" };
+  }
+
+  function addFromSpeech(text){
+    const parts = splitSpoken(text);
+    if(!parts.length){ showToast("聞き取れませんでした", false); return; }
+    const store = storeInput.value.trim();
+    const ids = [];
+    parts.slice().reverse().forEach(p=>{
+      const q = parseQty(p);
+      ids.push(pushItem(q.name.slice(0, 40), q.qty.slice(0, 8), store).id);
+    });
+    lastVoiceIds = ids;
+    rememberStore(store);
+    save();
+    render();
+    showToast("追加しました: " + parts.join(" / "), true);
+  }
+
+  voiceUndo.addEventListener("click", ()=>{
+    items = items.filter(i=>!lastVoiceIds.includes(i.id));
+    lastVoiceIds = [];
+    save();
+    render();
+    voiceToast.hidden = true;
+  });
+
+  const VOICE_ERRORS = {
+    "not-allowed": "マイクの許可が必要です(ブラウザの設定で許可してください)",
+    "service-not-allowed": "マイクの許可が必要です",
+    "network": "通信できないため、音声入力は使えません",
+    "no-speech": "声が聞こえませんでした",
+    "audio-capture": "マイクが見つかりません"
+  };
+
+  if(SpeechRec){
+    micBtn.hidden = false;
+    let current = null;
+    micBtn.addEventListener("click", ()=>{
+      if(listening && current){ current.stop(); return; }
+      const rec = new SpeechRec();
+      current = rec;
+      rec.lang = "ja-JP";
+      rec.interimResults = true;
+      rec.continuous = false;
+      rec.maxAlternatives = 1;
+      let finalText = "";
+      let failed = false;
+      rec.onstart = ()=>{
+        listening = true;
+        micBtn.classList.add("listening");
+        showToast("聞いています… 話してください", false);
+      };
+      rec.onresult = ev=>{
+        let interim = "";
+        for(let i = ev.resultIndex; i < ev.results.length; i++){
+          const r = ev.results[i];
+          if(r.isFinal) finalText += r[0].transcript; else interim += r[0].transcript;
+        }
+        if(interim) showToast("聞いています… " + interim, false);
+      };
+      rec.onerror = ev=>{
+        failed = true;
+        showToast(VOICE_ERRORS[ev.error] || "音声入力でエラーが出ました", false);
+      };
+      rec.onend = ()=>{
+        listening = false;
+        micBtn.classList.remove("listening");
+        if(failed) return;
+        if(finalText.trim()) addFromSpeech(finalText);
+        else showToast("声が聞こえませんでした", false);
+      };
+      try{
+        rec.start();
+      }catch(e){
+        showToast("音声入力を始められませんでした", false);
+      }
+    });
   }
 
   render();
